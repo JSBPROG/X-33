@@ -2,10 +2,11 @@ import os
 import glob
 import xml.etree.ElementTree as ET
 from typing import List, Dict
+import shutil
 
 from dotenv import load_dotenv
-from langchain.document_loaders import DirectoryLoader, TextLoader
-from langchain.text_splitter import CharacterTextSplitter
+from langchain_community.document_loaders import DirectoryLoader, TextLoader
+from langchain_text_splitters import CharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
 
@@ -15,16 +16,16 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 class KnowledgeBaseVectorizer:
     """
-    Clase para cargar, procesar, chunkear y vectorizar documentos de una base de conocimiento XML/OET.
-    
-    Parameters
+    Clase para cargar, procesar, dividir en chunks y vectorizar documentos de una base de conocimiento XML u otros formatos.
+
+    Parámetros
     ----------
     base_path : str
-        Ruta raíz donde buscar documentos.
+        Ruta raíz donde buscar documentos estructurados en subcarpetas.
     extension : str
         Extensión de archivos a procesar (por ejemplo, 'xml' o 'oet').
     db_name : str
-        Nombre del directorio donde se almacenará la base de datos vectorial.
+        Ruta al directorio donde se almacenará la base de datos vectorial.
     """
 
     def __init__(self, base_path: str, extension: str, db_name: str):
@@ -37,14 +38,9 @@ class KnowledgeBaseVectorizer:
 
     def load_documents(self):
         """
-        Carga documentos desde carpetas contenidas en la ruta `base_path`.
+        Carga todos los documentos con la extensión indicada desde cada subcarpeta de base_path.
 
-        Cada subcarpeta se trata como un tipo de documento distinto. Se cargan todos
-        los archivos con la extensión indicada y se agregan metadatos del tipo de documento.
-        
-        Returns
-        -------
-        None
+        Cada subcarpeta se considera un tipo de documento distinto, y se adjunta un metadata 'doc_type'.
         """
         all_paths = glob.glob(os.path.join(self.base_path, "*"))
         folders = [path for path in all_paths if os.path.isdir(path)]
@@ -67,17 +63,9 @@ class KnowledgeBaseVectorizer:
 
     def _parse_xml_structure(self, xml_content: str) -> List[Dict[str, str]]:
         """
-        Parsea el contenido XML y devuelve una lista de rutas jerárquicas con texto asociado.
+        Parsea un string XML y extrae una lista de diccionarios con claves 'path' y 'text'.
 
-        Parameters
-        ----------
-        xml_content : str
-            Contenido plano del archivo XML.
-
-        Returns
-        -------
-        List[Dict[str, str]]
-            Lista de diccionarios con las claves 'path' y 'text' representando cada nodo de texto en el XML.
+        Cada entrada reprensenta un nodo de texto en la jerarquía XML, donde 'path' es la ruta de etiquetas.
         """
         def walk(node, path=""):
             entries = []
@@ -101,29 +89,15 @@ class KnowledgeBaseVectorizer:
 
     def _flatten_parsed(self, parsed_entries: List[Dict[str, str]], sep: str = ": ") -> str:
         """
-        Convierte la estructura jerárquica en una cadena de texto plano con rutas y textos.
+        Convierte la lista de estructuras {'path', 'text'} a un único string plano.
 
-        Parameters
-        ----------
-        parsed_entries : List[Dict[str, str]]
-            Lista de rutas y textos extraídos del XML.
-        sep : str, optional
-            Separador entre la ruta y el texto. Por defecto es ": ".
-
-        Returns
-        -------
-        str
-            Texto plano resultante.
+        Cada línea resulta de unir path y text con el separador dado.
         """
         return "\n".join(f"{entry['path']}{sep}{entry['text']}" for entry in parsed_entries)
 
     def parse_documents(self):
         """
-        Parsea todos los documentos cargados y los convierte a texto estructurado plano.
-
-        Returns
-        -------
-        None
+        Parsea todos los documentos cargados y guarda sus textos aplanados en processed_strings.
         """
         self.processed_strings = []
         for doc in self.documents:
@@ -131,41 +105,37 @@ class KnowledgeBaseVectorizer:
             flat = self._flatten_parsed(parsed)
             self.processed_strings.append(flat)
 
-    def split_chunks(self, chunk_size=1000, chunk_overlap=200):
+    def split_chunks(self, chunk_size: int = 400, chunk_overlap: int = 100):
         """
-        Divide los textos procesados en fragmentos (chunks) para su vectorización.
+        Divide processed_strings en fragmentos aptos para embeddings.
 
-        Parameters
-        ----------
-        chunk_size : int, optional
-            Longitud máxima de cada fragmento. Por defecto es 1000 caracteres.
-        chunk_overlap : int, optional
-            Superposición entre fragmentos consecutivos. Por defecto es 200 caracteres.
-
-        Returns
-        -------
-        None
+        Usa CharacterTextSplitter para limitar cada chunk a `chunk_size` caracteres
+        y una superposición de `chunk_overlap`. Ajustable para mantener chunks token-safe.
         """
         splitter = CharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         self.chunks = splitter.create_documents(self.processed_strings)
 
     def create_vector_db(self):
         """
-        Crea y persiste la base de datos vectorial usando Chroma y OpenAIEmbeddings.
+        Crea y persiste una base de datos vectorial Chroma en `db_name`.
 
-        Si ya existe una base con el mismo nombre, se sobrescribe.
-
-        Returns
-        -------
-        None
+        - Elimina cualquier base existente en esa ruta.
+        - Usa OpenAIEmbeddings con chunk_size tokens-safe.
+        - Inserta todos los chunks de una vez y persiste.
         """
-        embeddings = OpenAIEmbeddings()
+        if not self.chunks:
+            print("No hay chunks para procesar.")
+            return
 
         if os.path.exists(self.db_name):
-            Chroma(persist_directory=self.db_name, embedding_function=embeddings).delete_collection()
+            shutil.rmtree(self.db_name)
+        os.makedirs(self.db_name, exist_ok=True)
 
-        vectorstore = Chroma.from_documents(documents=self.chunks, embedding=embeddings, persist_directory=self.db_name)
-        print(f"🧠 Vector DB creada con {vectorstore._collection.count()} chunks en {self.db_name}")
+        embeddings = OpenAIEmbeddings(chunk_size=400)
+        vectorstore = Chroma.from_documents(
+            documents=self.chunks,
+            embedding=embeddings,
+            persist_directory=self.db_name
+        )
 
-
-
+        print(f"✅ Vector DB creada con {len(self.chunks)} chunks en {self.db_name}")

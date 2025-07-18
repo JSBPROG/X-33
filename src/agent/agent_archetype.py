@@ -10,15 +10,12 @@ from langchain.prompts import PromptTemplate
 from langchain_core.vectorstores import VectorStoreRetriever
 from langchain_chroma import Chroma
 
-# Ensure the vector_db module can be found
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from vector_db import KnowledgeBaseVectorizer
 
-# Load environment variables from the root .env file
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
 
 
-# --- Configuration Constants ---
 MODEL_NAME = os.getenv("MODEL", "gpt-4")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ARCHETYPES_PATH = os.path.join(BASE_DIR, "..", "knowledge_base")
@@ -29,18 +26,18 @@ TEMPLATES_DB_PATH = os.path.join(BASE_DIR, "..", "database", "vector_db_temp")
 
 def setup_knowledge_base(base_path: str, extension: str, db_name: str) -> Chroma:
     """
-    Initializes, processes, and vectorizes a knowledge base.
+    Inicializa, procesa y vectoriza una base de conocimiento.
 
-    This function runs the full pipeline: loading documents, parsing them,
-    splitting them into chunks, and creating a persistent Chroma vector database.
+    Esta función ejecuta el pipeline completo: carga documentos, los parsea,
+    los divide en fragmentos y crea una base de datos vectorial Chroma persistente.
 
     Args:
-        base_path: The root directory of the knowledge files.
-        extension: The file extension of the documents (e.g., 'xml', 'oet').
-        db_name: The directory path to save the vector database.
+        base_path: El directorio raíz de los archivos de conocimiento.
+        extension: La extensión de archivo de los documentos (ej., 'xml', 'oet').
+        db_name: La ruta del directorio para guardar la base de datos vectorial.
 
     Returns:
-        A Chroma vector store instance.
+        Una instancia de almacén de vectores Chroma.
     """
     if os.path.exists(db_name):
         print(f"--- Loading existing Knowledge Base from: {db_name} ---")
@@ -62,22 +59,22 @@ def setup_knowledge_base(base_path: str, extension: str, db_name: str) -> Chroma
 
 class ArchetypeAgent:
     """
-    An agent that leverages a Large Language Model and a vector database to infer
-    archetypes and answer queries related to clinical interoperability.
+    Un agente que aprovecha un Modelo de Lenguaje Grande y una base de datos vectorial para inferir
+    arquetipos y responder consultas relacionadas con la interoperabilidad clínica.
     """
     def __init__(self, model_name: str, retriever: VectorStoreRetriever):
         """
-        Initializes the agent.
+        Inicializa el agente.
 
         Args:
-            model_name: The name of the OpenAI model to use.
-            retriever: The configured vector store retriever to use for context.
+            model_name: El nombre del modelo de OpenAI a usar.
+            retriever: El recuperador de almacén de vectores configurado para usar como contexto.
         """
         self.llm = self._initialize_llm(model_name)
         self.conversation_chain = self._create_conversation_chain(retriever)
 
     def _initialize_llm(self, model_name: str) -> ChatOpenAI:
-        """Sets up the ChatOpenAI model with a specific system prompt."""
+        """Configura el modelo ChatOpenAI con un prompt de sistema específico."""
         system_prompt = """Eres un experto en interoperabilidad clínica y estándares openEHR. Tu función es ayudar a seleccionar arquetipos y templates adecuados para representar información médica estructurada, a partir de preguntas o descripciones en lenguaje natural.
 
 Dispones de una base de conocimiento completa que incluye todos los arquetipos y templates oficiales de openEHR, previamente cargados y procesados.
@@ -107,7 +104,7 @@ Responde de forma concisa, clara y clínica.
         )
 
     def _create_conversation_chain(self, retriever: VectorStoreRetriever) -> ConversationalRetrievalChain:
-        """Builds the conversational retrieval chain with memory."""
+        """Construye la cadena de recuperación conversacional con memoria."""
         system_prompt = """Eres un experto en interoperabilidad clínica y estándares openEHR. Tu función es ayudar a seleccionar arquetipos y templates adecuados para representar información médica estructurada, a partir de preguntas o descripciones en lenguaje natural.
 
 Dispones de una base de conocimiento completa que incluye todos los arquetipos y templates oficiales de openEHR, previamente cargados y procesados.
@@ -147,13 +144,13 @@ Responde de forma concisa, clara y clínica.
 
     def ask(self, query: str) -> str:
         """
-        Poses a question to the agent and returns the answer.
+        Formula una pregunta al agente y devuelve la respuesta.
 
         Args:
-            query: The user's question in natural language.
+            query: La pregunta del usuario en lenguaje natural.
 
         Returns:
-            The answer from the conversational chain.
+            La respuesta de la cadena conversacional.
         """
         result = self.conversation_chain.invoke({"question": query})
         return result.get("answer", "No answer could be generated.")
@@ -161,11 +158,8 @@ Responde de forma concisa, clara y clínica.
 
 def main():
     """
-    Main function to set up the knowledge bases, initialize the agent, and run a query.
+    Función principal para configurar las bases de conocimiento, inicializar el agente y ejecutar una consulta.
     """
-    # --- Step 1: Create or load vector databases ---
-    # NOTE: This process runs every time. For production, you would typically
-    # run this once and then load the existing databases directly.
     arch_db = setup_knowledge_base(
         base_path=ARCHETYPES_PATH,
         extension="xml",
@@ -177,14 +171,10 @@ def main():
         db_name=TEMPLATES_DB_PATH
     )
 
-    # --- Step 2: Select a retriever and initialize the agent ---
-    # This example uses the archetype retriever. You could implement logic
-    # to dynamically choose between arch_db and temp_db based on the query.
-    retriever = temp_db.as_retriever(search_kwargs={"k": 2}) ############################Número de documentos que recupera, 4 es demasiado y no lo carga como contexto
+    retriever = temp_db.as_retriever(search_kwargs={"k": 2})
     
     agent = ArchetypeAgent(model_name=MODEL_NAME, retriever=retriever)
 
-    # --- Step 3: Run an example query ---
     query = "¿Qué arquetipo puedo utilizar para la presión sanguínea?"
     print(f"\nQuery: {query}")
     answer = agent.ask(query)
